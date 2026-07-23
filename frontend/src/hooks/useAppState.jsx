@@ -356,6 +356,7 @@ import {
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 async function apiFetch(method, path, body) {
+  console.log(BASE)
   try {
     const headers = { 'Content-Type': 'application/json' };
     const token = localStorage.getItem('token');
