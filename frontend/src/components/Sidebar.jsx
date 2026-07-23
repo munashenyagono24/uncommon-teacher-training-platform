@@ -8,6 +8,7 @@ import {
 const NAV = [
   { to: '/',           label: 'Dashboard',      Icon: IconDashboard },
   { to: '/teachers',   label: 'Teachers',       Icon: IconPeople    },
+  { to: '/requisitions', label: 'Requisitions', Icon: IconReport    },
   { to: '/workshops',  label: 'Workshops',      Icon: IconEvent     },
   { to: '/attendance', label: 'Take Attendance', Icon: IconQR       },
   { to: '/reports',    label: 'Reports',        Icon: IconReport    },

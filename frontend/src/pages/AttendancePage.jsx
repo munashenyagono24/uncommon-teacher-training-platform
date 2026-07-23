@@ -4,53 +4,80 @@ import { uid, fmtDate, fmtDateTime, initials } from '../utils/helpers.js'
 import { IconQR, IconCheck, IconX, IconWifiOff } from '../components/Icons.jsx'
 
 export default function AttendancePage() {
-  const { state, recordAttendance, toast } = useApp()
-  const { teachers, workshops, attendance, isOnline } = state
+  const { state, recordAttendance, toast, clearImportAttendees } = useApp()
+  const { teachers, workshops, attendance, isOnline, importAttendeesState } = state
 
   const [workshopId, setWorkshopId] = useState('')
   const [scanning, setScanning] = useState(false)
   const [lastScan, setLastScan] = useState(null) // { teacher, status: 'ok'|'error'|'duplicate', msg }
   const [sessionLog, setSessionLog] = useState([])
+  const [manualParticipants, setManualParticipants] = useState([])
+  const [loadingPrevious, setLoadingPrevious] = useState(false)
+  
   const scannerRef = useRef(null)
   const scannerObjRef = useRef(null)
+  
+  // Refs to prevent rapid double-scans and stale closures within the scanner instance
+  const handleScanRef = useRef(null)
+  const debounceRef = useRef({ raw: null, time: 0 })
 
   const selectedWorkshop = workshops.find(w => w.id === workshopId)
+
+  useEffect(() => {
+    if (!importAttendeesState || !workshops.length || !attendance.length || !teachers.length) return
+
+    const { sourceWorkshopId, targetWorkshopId } = importAttendeesState
+    if (!sourceWorkshopId || !targetWorkshopId) {
+      clearImportAttendees()
+      return
+    }
+
+    if (!workshopId) {
+      setWorkshopId(targetWorkshopId)
+    }
+
+    const sourceWorkshop = workshops.find(w => w.id === sourceWorkshopId)
+    if (!sourceWorkshop) {
+      toast('Could not find source workshop for import', 'error')
+      clearImportAttendees()
+      return
+    }
+
+    const participants = attendance
+      .filter(a => a.workshopId === sourceWorkshopId)
+      .map(a => {
+        const teacher = teachers.find(t => t.id === a.teacherId)
+        return teacher ? { teacherId: teacher.id, teacher, status: 'absent' } : null
+      })
+      .filter(Boolean)
+
+    if (participants.length === 0) {
+      toast(`No attendees found from ${sourceWorkshop.name}`, 'error')
+      clearImportAttendees()
+      return
+    }
+
+    setManualParticipants(participants)
+    toast(`Imported ${participants.length} teachers from ${sourceWorkshop.name}`, 'success')
+    clearImportAttendees()
+  }, [importAttendeesState, workshopId, workshops, attendance, teachers, clearImportAttendees, toast])
+
+  useEffect(() => {
+    setManualParticipants([])
+    setLastScan(null)
+  }, [workshopId])
 
   // Sorted workshops: upcoming/today first
   const sortedWorkshops = [...workshops].sort((a, b) => b.date.localeCompare(a.date))
 
-  // Start/stop scanner
-  useEffect(() => {
-    if (!scanning || !workshopId) return
-
-    let cancelled = false
-    const containerId = 'qr-scanner-view'
-
-    import('html5-qrcode').then(({ Html5QrcodeScanner }) => {
-      if (cancelled) return
-      const scanner = new Html5QrcodeScanner(
-        containerId,
-        { fps: 10, qrbox: { width: 230, height: 230 }, rememberLastUsedCamera: true },
-        false
-      )
-      scanner.render(
-        (decoded) => handleScan(decoded),
-        () => {} // per-frame error - ignore
-      )
-      scannerObjRef.current = scanner
-    }).catch(() => {
-      toast('Could not access camera', 'error')
-      setScanning(false)
-    })
-
-    return () => {
-      cancelled = true
-      scannerObjRef.current?.clear().catch(() => {})
-      scannerObjRef.current = null
-    }
-  }, [scanning, workshopId])
-
   const handleScan = useCallback(async (raw) => {
+    // Debounce to prevent the scanner from rapidly firing multiple events for the same code
+    const now = Date.now()
+    if (debounceRef.current.raw === raw && (now - debounceRef.current.time) < 3000) {
+      return
+    }
+    debounceRef.current = { raw, time: now }
+
     let parsed
     try { parsed = JSON.parse(raw) } catch { parsed = { id: raw } }
 
@@ -84,10 +111,140 @@ export default function AttendancePage() {
     setSessionLog(prev => [{ ...record, teacher }, ...prev])
   }, [teachers, attendance, workshopId, isOnline, recordAttendance])
 
+  // Keep the ref updated with the latest handleScan to avoid stale closures in the HTML5Qrcode component
+  useEffect(() => {
+    handleScanRef.current = handleScan
+  }, [handleScan])
+
+  // Start/stop scanner using core Html5Qrcode to bypass the fallback UI
+  useEffect(() => {
+    if (!scanning || !workshopId) return
+
+    let cancelled = false
+    const containerId = 'qr-scanner-view'
+
+    import('html5-qrcode').then(({ Html5Qrcode }) => {
+      if (cancelled) return
+      
+      const scanner = new Html5Qrcode(containerId)
+      scannerObjRef.current = scanner
+
+      scanner.start(
+        { facingMode: "environment" }, // Forces the direct camera stream
+        { fps: 10, qrbox: { width: 230, height: 230 } },
+        (decoded) => {
+          if (handleScanRef.current) handleScanRef.current(decoded)
+        },
+        () => {} // per-frame error - ignore
+      ).catch(() => {
+        if (!cancelled) {
+          toast('Could not access camera. Please check permissions.', 'error')
+          setScanning(false)
+        }
+      })
+    }).catch(() => {
+      if (!cancelled) {
+        toast('Failed to load scanner module', 'error')
+        setScanning(false)
+      }
+    })
+
+    return () => {
+      cancelled = true
+      if (scannerObjRef.current) {
+        const s = scannerObjRef.current
+        s.stop().then(() => {
+          s.clear()
+        }).catch(() => {
+          try { s.clear() } catch (e) {}
+        })
+        scannerObjRef.current = null
+      }
+    }
+  }, [scanning, workshopId, toast])
+
   const stopScanner = () => {
-    scannerObjRef.current?.clear().catch(() => {})
-    scannerObjRef.current = null
+    if (scannerObjRef.current) {
+      const s = scannerObjRef.current
+      s.stop().then(() => {
+        s.clear()
+      }).catch(() => {
+        try { s.clear() } catch (e) {}
+      })
+      scannerObjRef.current = null
+    }
     setScanning(false)
+  }
+
+  // Load teachers who attended the most recent earlier workshop at the same location
+  const loadPreviousParticipants = useCallback(() => {
+    if (!selectedWorkshop) return
+    setLoadingPrevious(true)
+
+    const previousWorkshop = workshops
+      .filter(w =>
+        w.location === selectedWorkshop.location &&
+        w.id !== selectedWorkshop.id &&
+        w.date < selectedWorkshop.date
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0]
+
+    if (!previousWorkshop) {
+      toast('No previous workshop found at this location', 'error')
+      setLoadingPrevious(false)
+      return
+    }
+
+    const previousAttendance = attendance.filter(a => a.workshopId === previousWorkshop.id)
+    const participants = previousAttendance
+      .map(a => {
+        const teacher = teachers.find(t => t.id === a.teacherId)
+        return teacher ? { teacherId: teacher.id, teacher, status: 'absent' } : null
+      })
+      .filter(Boolean)
+
+    setManualParticipants(participants)
+    setLoadingPrevious(false)
+    toast(`Loaded ${participants.length} participants from ${fmtDate(previousWorkshop.date)}`, 'success')
+  }, [selectedWorkshop, workshops, attendance, teachers, toast])
+
+  // Add a single teacher manually via the dropdown
+  const addManualParticipant = (teacherId) => {
+    if (!teacherId) return
+    if (manualParticipants.some(p => p.teacherId === teacherId)) return
+    const teacher = teachers.find(t => t.id === teacherId)
+    if (!teacher) return
+    setManualParticipants(prev => [...prev, { teacherId, teacher, status: 'absent' }])
+  }
+
+  // Toggle a participant's status between present/absent
+  const setManualStatus = (teacherId, status) => {
+    setManualParticipants(prev =>
+      prev.map(p => (p.teacherId === teacherId ? { ...p, status } : p))
+    )
+  }
+
+  // Save all marked participants as attendance records
+  const submitManualAttendance = async () => {
+    let count = 0
+    for (const p of manualParticipants) {
+      const already = attendance.some(a => a.teacherId === p.teacherId && a.workshopId === workshopId)
+      if (already) continue
+
+      const record = {
+        id: uid(),
+        teacherId: p.teacherId,
+        workshopId,
+        checkInTime: new Date().toISOString(),
+        status: p.status,
+        syncStatus: isOnline ? 'synced' : 'pending',
+      }
+      await recordAttendance(record)
+      setSessionLog(prev => [{ ...record, teacher: p.teacher }, ...prev])
+      count++
+    }
+    toast(`Recorded attendance for ${count} participant(s)`, 'success')
+    setManualParticipants([])
   }
 
   const sessionCount = sessionLog.length
@@ -166,6 +323,71 @@ export default function AttendancePage() {
                 )}
               </div>
             </div>
+
+            {/* Manual attendance */}
+            {workshopId && (
+              <div className="card">
+                <div className="card-body">
+                  <h3 className="card-title">3. Manual Attendance</h3>
+
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={loadPreviousParticipants} disabled={loadingPrevious}>
+                      {loadingPrevious ? 'Loading…' : 'Load Previous Session'}
+                    </button>
+                    <select onChange={e => { addManualParticipant(e.target.value); e.target.value = '' }} defaultValue="">
+                      <option value="">+ Add teacher manually…</option>
+                      {teachers
+                        .filter(t => !manualParticipants.some(p => p.teacherId === t.id))
+                        .map(t => (
+                          <option key={t.id} value={t.id}>{t.fullName} — {t.region}</option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {manualParticipants.length === 0 ? (
+                    <p style={{ color: 'var(--muted)', fontSize: 14 }}>
+                      No participants loaded. Load a previous session or add teachers manually.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="check-in-list" style={{ maxHeight: 360, overflowY: 'auto' }}>
+                        {manualParticipants.map(p => (
+                          <div key={p.teacherId} className="check-in-item">
+                            <div className="check-in-avatar">{initials(p.teacher.fullName)}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div className="name">{p.teacher.fullName}</div>
+                              <div className="time">{p.teacher.region} · {p.teacher.bootcamp}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                              <button
+                                className={`btn btn-sm ${p.status === 'present' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setManualStatus(p.teacherId, 'present')}
+                              >
+                                <IconCheck /> Present
+                              </button>
+                              <button
+                                className={`btn btn-sm ${p.status === 'absent' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setManualStatus(p.teacherId, 'absent')}
+                              >
+                                <IconX /> Absent
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <button
+                        className="btn btn-primary"
+                        style={{ marginTop: 14, width: '100%' }}
+                        onClick={submitManualAttendance}
+                      >
+                        Save Attendance for {manualParticipants.length} Participant(s)
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Scan feedback */}
             {lastScan && (

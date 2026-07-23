@@ -341,21 +341,30 @@ export function useApp() {
 */
 
 
-import { createContext, useContext, useReducer, useEffect, useCallback } from 'react'
+import { createContext, useContext, useReducer, useEffect, useCallback, useState } from 'react'
 import {
   getAllTeachers, saveTeacher, deleteTeacher,
   getAllWorkshops, saveWorkshop, deleteWorkshop,
   getAllAttendance, saveAttendance,
   getPendingAttendance, markSynced,
+  getAllLocations, saveLocation, deleteLocation,
+  getAllFacilitators, saveFacilitator, deleteFacilitator,
+  getAllMinistryContacts, saveMinistryContact, deleteMinistryContact,
+  getAllFundRequisitions, saveFundRequisition, deleteFundRequisition,
 } from '../utils/db.js'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 async function apiFetch(method, path, body) {
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     if (!res.ok) {
@@ -374,7 +383,16 @@ const Ctx = createContext(null)
 
 const init = {
   teachers: [], workshops: [], attendance: [],
+  locations: [], facilitators: [], ministryContacts: [], fundRequisitions: [],
   isOnline: navigator.onLine, pending: 0, toasts: [],
+  token: localStorage.getItem('token') || null,
+  user: (() => {
+    try {
+      const u = localStorage.getItem('user');
+      return u ? JSON.parse(u) : null;
+    } catch (_) { return null; }
+  })(),
+  importAttendeesState: null,
 }
 
 function reducer(state, action) {
@@ -385,14 +403,54 @@ function reducer(state, action) {
         teachers:   action.teachers,
         workshops:  action.workshops,
         attendance: action.attendance,
+        locations:  action.locations || [],
+        facilitators: action.facilitators || [],
+        ministryContacts: action.ministryContacts || [],
+        fundRequisitions: action.fundRequisitions || [],
         pending:    action.attendance.filter(a => a.syncStatus === 'pending').length,
+      }
+    case 'LOGIN_SUCCESS':
+      return {
+        ...state,
+        token: action.token,
+        user: action.user,
+      }
+    case 'LOGOUT':
+      return {
+        ...state,
+        teachers: [],
+        workshops: [],
+        attendance: [],
+        locations: [],
+        facilitators: [],
+        ministryContacts: [],
+        fundRequisitions: [],
+        pending: 0,
+        token: null,
+        user: null,
+        importAttendeesState: null,
+      }
+    case 'SET_IMPORT_ATTENDEES':
+      return {
+        ...state,
+        importAttendeesState: {
+          sourceWorkshopId: action.sourceWorkshopId,
+          targetWorkshopId: action.targetWorkshopId,
+        }
+      }
+    case 'CLEAR_IMPORT_ATTENDEES':
+      return {
+        ...state,
+        importAttendeesState: null,
       }
     case 'ADD_TEACHER':
       return { ...state, teachers: [...state.teachers, action.teacher] }
     case 'DEL_TEACHER':
       return { ...state, teachers: state.teachers.filter(t => t.id !== action.id) }
     case 'ADD_WORKSHOP':
-      return { ...state, workshops: [...state.workshops, action.workshop] }
+      return { ...state, workshops: [...state.workshops.filter(w => w.id !== action.workshop.id), action.workshop] }
+    case 'UPDATE_WORKSHOP':
+      return { ...state, workshops: state.workshops.map(w => w.id === action.workshop.id ? action.workshop : w) }
     case 'DEL_WORKSHOP':
       return { ...state, workshops: state.workshops.filter(w => w.id !== action.id) }
     case 'ADD_ATTENDANCE': {
@@ -401,6 +459,22 @@ function reducer(state, action) {
     }
     case 'SYNC_DONE':
       return { ...state, attendance: state.attendance.map(a => ({ ...a, syncStatus: 'synced' })), pending: 0 }
+    case 'ADD_LOCATION':
+      return { ...state, locations: [...state.locations.filter(l => l.id !== action.location.id), action.location] }
+    case 'DEL_LOCATION':
+      return { ...state, locations: state.locations.filter(l => l.id !== action.id) }
+    case 'ADD_FACILITATOR':
+      return { ...state, facilitators: [...state.facilitators.filter(f => f.id !== action.facilitator.id), action.facilitator] }
+    case 'DEL_FACILITATOR':
+      return { ...state, facilitators: state.facilitators.filter(f => f.id !== action.id) }
+    case 'ADD_MINISTRY_CONTACT':
+      return { ...state, ministryContacts: [...state.ministryContacts.filter(m => m.id !== action.contact.id), action.contact] }
+    case 'DEL_MINISTRY_CONTACT':
+      return { ...state, ministryContacts: state.ministryContacts.filter(m => m.id !== action.id) }
+    case 'ADD_FUND_REQUISITION':
+      return { ...state, fundRequisitions: [...state.fundRequisitions.filter(r => r.id !== action.requisition.id), action.requisition] }
+    case 'DEL_FUND_REQUISITION':
+      return { ...state, fundRequisitions: state.fundRequisitions.filter(r => r.id !== action.id) }
     case 'SET_ONLINE':
       return { ...state, isOnline: action.val }
     case 'TOAST_ADD':
@@ -415,33 +489,70 @@ function reducer(state, action) {
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, init)
 
+  const loadServerData = useCallback(async (jwtToken) => {
+    if (!navigator.onLine || !jwtToken) return
+    try {
+      // Helper fetch with explicit authorization header
+      const fetchWithToken = async (path) => {
+        const res = await fetch(`${BASE}${path}`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`
+          }
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      };
+
+      const [st, sw, sa, sl, sf, sm, sr] = await Promise.all([
+        fetchWithToken('/api/teachers'),
+        fetchWithToken('/api/workshops'),
+        fetchWithToken('/api/attendance'),
+        fetchWithToken('/api/locations'),
+        fetchWithToken('/api/facilitators'),
+        fetchWithToken('/api/ministry-contacts'),
+        fetchWithToken('/api/fund-requisitions'),
+      ])
+
+      for (const t of st) await saveTeacher(t)
+      for (const w of sw) await saveWorkshop(w)
+      for (const a of sa) await saveAttendance({ ...a, syncStatus: 'synced' })
+      for (const l of sl) await saveLocation(l)
+      for (const f of sf) await saveFacilitator(f)
+      for (const m of sm) await saveMinistryContact(m)
+      for (const r of sr) await saveFundRequisition(r)
+
+      dispatch({
+        type: 'LOAD',
+        teachers: st,
+        workshops: sw,
+        attendance: sa.map(a => ({ ...a, syncStatus: 'synced' })),
+        locations: sl,
+        facilitators: sf,
+        ministryContacts: sm,
+        fundRequisitions: sr
+      })
+    } catch (err) {
+      console.warn('Could not load from server, using local data:', err.message)
+    }
+  }, [])
+
   useEffect(() => {
     ;(async () => {
       // Always load from IndexedDB first so UI is instant
-      const [teachers, workshops, attendance] = await Promise.all([
+      const [teachers, workshops, attendance, locations, facilitators, ministryContacts, fundRequisitions] = await Promise.all([
         getAllTeachers(), getAllWorkshops(), getAllAttendance(),
+        getAllLocations(), getAllFacilitators(), getAllMinistryContacts(), getAllFundRequisitions(),
       ])
-      dispatch({ type: 'LOAD', teachers, workshops, attendance })
+      dispatch({ type: 'LOAD', teachers, workshops, attendance, locations, facilitators, ministryContacts, fundRequisitions })
 
-      // Then try to refresh from server
-      if (navigator.onLine) {
-        try {
-          const [st, sw, sa] = await Promise.all([
-            apiFetch('GET', '/api/teachers'),
-            apiFetch('GET', '/api/workshops'),
-            apiFetch('GET', '/api/attendance'),
-          ])
-          for (const t of st) await saveTeacher(t)
-          for (const w of sw) await saveWorkshop(w)
-          for (const a of sa) await saveAttendance({ ...a, syncStatus: 'synced' })
-          dispatch({ type: 'LOAD', teachers: st, workshops: sw,
-            attendance: sa.map(a => ({ ...a, syncStatus: 'synced' })) })
-        } catch (err) {
-          console.warn('Could not load from server, using local data:', err.message)
-        }
+      // Then try to refresh from server if logged in
+      const currentToken = localStorage.getItem('token');
+      if (currentToken) {
+        await loadServerData(currentToken);
       }
     })()
-  }, [])
+  }, [loadServerData])
 
   useEffect(() => {
     const on  = () => { dispatch({ type: 'SET_ONLINE', val: true });  syncPending() }
@@ -459,6 +570,55 @@ export function AppProvider({ children }) {
     dispatch({ type: 'TOAST_ADD', toast: { id, msg, type } })
     setTimeout(() => dispatch({ type: 'TOAST_DEL', id }), 3500)
   }, [])
+
+  // ── Authentication Actions ──
+
+  async function login(email, password) {
+    try {
+      const res = await apiFetch('POST', '/api/auth/login', { email, password });
+      localStorage.setItem('token', res.token);
+      localStorage.setItem('user', JSON.stringify(res.user));
+      dispatch({ type: 'LOGIN_SUCCESS', token: res.token, user: res.user });
+      toast('Welcome back!');
+      await loadServerData(res.token);
+      return res.user;
+    } catch (err) {
+      toast(err.message || 'Login failed', 'error');
+      throw err;
+    }
+  }
+
+  async function signup(email, password, role, profile) {
+    try {
+      const res = await apiFetch('POST', '/api/auth/signup', { email, password, role, profile });
+      localStorage.setItem('token', res.token);
+      localStorage.setItem('user', JSON.stringify(res.user));
+      dispatch({ type: 'LOGIN_SUCCESS', token: res.token, user: res.user });
+      toast('Signed up successfully!');
+      await loadServerData(res.token);
+      return res.user;
+    } catch (err) {
+      toast(err.message || 'Registration failed', 'error');
+      throw err;
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    dispatch({ type: 'LOGOUT' });
+    toast('Logged out successfully');
+  }
+
+  function setImportAttendees(sourceWorkshopId, targetWorkshopId) {
+    dispatch({ type: 'SET_IMPORT_ATTENDEES', sourceWorkshopId, targetWorkshopId });
+  }
+
+  function clearImportAttendees() {
+    dispatch({ type: 'CLEAR_IMPORT_ATTENDEES' });
+  }
+
+  // ── Database Actions ──
 
   async function addTeacher(teacher) {
     await saveTeacher(teacher)
@@ -523,9 +683,95 @@ export function AppProvider({ children }) {
     }
   }
 
+  async function addLocation(location) {
+    await saveLocation(location)
+    dispatch({ type: 'ADD_LOCATION', location })
+    if (navigator.onLine) {
+      try { await apiFetch('POST', '/api/locations', location) }
+      catch (err) { console.warn('Could not save location:', err.message) }
+    }
+  }
+
+  async function removeLocation(id) {
+    await deleteLocation(id)
+    dispatch({ type: 'DEL_LOCATION', id })
+    if (navigator.onLine) {
+      try { await apiFetch('DELETE', `/api/locations/${id}`) }
+      catch (err) { console.warn('Could not delete location:', err.message) }
+    }
+  }
+
+  async function addFacilitator(facilitator) {
+    await saveFacilitator(facilitator)
+    dispatch({ type: 'ADD_FACILITATOR', facilitator })
+    if (navigator.onLine) {
+      try { await apiFetch('POST', '/api/facilitators', facilitator) }
+      catch (err) { console.warn('Could not save facilitator:', err.message) }
+    }
+  }
+
+  async function removeFacilitator(id) {
+    await deleteFacilitator(id)
+    dispatch({ type: 'DEL_FACILITATOR', id })
+    if (navigator.onLine) {
+      try { await apiFetch('DELETE', `/api/facilitators/${id}`) }
+      catch (err) { console.warn('Could not delete facilitator:', err.message) }
+    }
+  }
+
+  async function addMinistryContact(contact) {
+    await saveMinistryContact(contact)
+    dispatch({ type: 'ADD_MINISTRY_CONTACT', contact })
+    if (navigator.onLine) {
+      try { await apiFetch('POST', '/api/ministry-contacts', contact) }
+      catch (err) { console.warn('Could not save ministry contact:', err.message) }
+    }
+  }
+
+  async function removeMinistryContact(id) {
+    await deleteMinistryContact(id)
+    dispatch({ type: 'DEL_MINISTRY_CONTACT', id })
+    if (navigator.onLine) {
+      try { await apiFetch('DELETE', `/api/ministry-contacts/${id}`) }
+      catch (err) { console.warn('Could not delete ministry contact:', err.message) }
+    }
+  }
+
+  async function addFundRequisition(requisition) {
+    await saveFundRequisition(requisition)
+    dispatch({ type: 'ADD_FUND_REQUISITION', requisition })
+    if (navigator.onLine) {
+      try { await apiFetch('POST', '/api/fund-requisitions', requisition) }
+      catch (err) { console.warn('Could not save fund requisition:', err.message) }
+    }
+  }
+
+  async function removeFundRequisition(id) {
+    await deleteFundRequisition(id)
+    dispatch({ type: 'DEL_FUND_REQUISITION', id })
+    if (navigator.onLine) {
+      try { await apiFetch('DELETE', `/api/fund-requisitions/${id}`) }
+      catch (err) { console.warn('Could not delete fund requisition:', err.message) }
+    }
+  }
+
+  async function updateWorkshop(workshop) {
+    await saveWorkshop(workshop)
+    dispatch({ type: 'UPDATE_WORKSHOP', workshop })
+    if (navigator.onLine) {
+      try { await apiFetch('PUT', `/api/workshops/${workshop.id}`, workshop) }
+      catch (err) { console.warn('Could not update workshop:', err.message) }
+    }
+  }
+
   return (
-    <Ctx.Provider value={{ state, toast, addTeacher, removeTeacher,
-      addWorkshop, removeWorkshop, recordAttendance, syncPending }}>
+    <Ctx.Provider value={{
+      state, toast, addTeacher, removeTeacher,
+      addWorkshop, removeWorkshop, recordAttendance, syncPending,
+      addLocation, removeLocation, addFacilitator, removeFacilitator,
+      addMinistryContact, removeMinistryContact, addFundRequisition, removeFundRequisition, updateWorkshop,
+      login, signup, logout, setImportAttendees, clearImportAttendees
+    }}>
       {children}
     </Ctx.Provider>
   )

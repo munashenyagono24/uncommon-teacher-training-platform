@@ -1,13 +1,21 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../hooks/useAppState.jsx'
 
-import { uid, makeTeacherId, makeQRCode, exportTeachers, fmtDate, initials } from '../utils/helpers.js'
+import { uid, makeTeacherId, makeQRCode, fmtDate, initials } from '../utils/helpers.js'
 import { IconPlus, IconX, IconSearch, IconDownload, IconEye, IconTrash, IconUser } from '../components/Icons.jsx'
 
-const REGIONS = [
-  'Harare','Bulawayo','Manicaland',
-  'Mashonaland Central','Mashonaland East','Mashonaland West',
-  'Masvingo','Matabeleland North','Matabeleland South','Midlands',
+// Updated selector array populated with the precise target hubs list
+const BOOTCAMPS = [
+  'Dzivaresekwa',
+  'Mbare',
+  'Mufakose',
+  'Kuwadzana',
+  'Warren Park',
+  'Kambuzuma',
+  'Nedbank Innovation Hub',
+  'The Sally Foundation Hub',
+  'Victoria Falls',
+  'Chitungwiza'
 ]
 
 export default function TeachersPage() {
@@ -19,7 +27,7 @@ export default function TeachersPage() {
   const [showForm, setShowForm] = useState(false)
   const [viewTeacher, setViewTeacher] = useState(null)
 
-  // Filtered list
+  // Filtered list using safe deep state cross-matching
   const filtered = useMemo(() => {
     return teachers.filter(t => {
       const q = search.toLowerCase()
@@ -43,9 +51,7 @@ export default function TeachersPage() {
           <p>{teachers.length} registered · each with a permanent QR code</p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-secondary" onClick={() => exportTeachers(teachers)}>
-            <IconDownload /> Export
-          </button>
+          {/* Export button removed smoothly from this section layout */}
           <button className="btn btn-primary" onClick={() => setShowForm(true)}>
             <IconPlus /> Register Teacher
           </button>
@@ -64,13 +70,13 @@ export default function TeachersPage() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <select value={filterRegion} onChange={e => setFilterRegion(e.target.value)} style={{ width: 180 }}>
-            <option value="">All Regions</option>
-            {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+          <select value={filterRegion} onChange={e => setFilterRegion(e.target.value)} style={{ width: 200 }}>
+            <option value="">All Bootcamps</option>
+            {BOOTCAMPS.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
         </div>
 
-        {/* Table */}
+        {/* Table View */}
         {filtered.length === 0 ? (
           <div className="empty-state">
             <IconUser />
@@ -93,8 +99,8 @@ export default function TeachersPage() {
                   <th>Teacher</th>
                   <th>Teacher ID</th>
                   <th>Contact</th>
+                  <th>Cohort / Class</th>
                   <th>Bootcamp</th>
-                  <th>Region</th>
                   <th>Check-ins</th>
                   <th>Registered</th>
                   <th></th>
@@ -169,11 +175,10 @@ function RegisterModal({ onClose, addTeacher, toast }) {
     if (!form.email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) e.email = 'Valid email required'
     if (!form.phone.trim())      e.phone = 'Required'
     if (!form.bootcamp.trim())   e.bootcamp = 'Required'
-    if (!form.region)            e.region = 'Select a region'
+    if (!form.region)            e.region = 'Select a bootcamp location'
     setErrors(e)
     return Object.keys(e).length === 0
   }
-
 
   const handleSubmit = async () => {
     if (!validate()) return
@@ -192,14 +197,6 @@ function RegisterModal({ onClose, addTeacher, toast }) {
       setLoading(false)
     }
   }
-
-
-
-
-
-
-
-
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -228,16 +225,16 @@ function RegisterModal({ onClose, addTeacher, toast }) {
               <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)}
                 placeholder="+263 77 123 4567" className={errors.phone ? 'input-error' : ''} />
             </Field>
-            <Field label="Bootcamp" error={errors.bootcamp}>
+            <Field label="Cohort / Class Title" error={errors.bootcamp}>
               <input type="text" value={form.bootcamp} onChange={e => set('bootcamp', e.target.value)}
                 placeholder="e.g. Bootcamp 3" className={errors.bootcamp ? 'input-error' : ''} />
             </Field>
           </div>
-          <Field label="Region" error={errors.region}>
+          <Field label="Bootcamp Hub Location" error={errors.region}>
             <select value={form.region} onChange={e => set('region', e.target.value)}
               className={errors.region ? 'input-error' : ''}>
-              <option value="">Select region…</option>
-              {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+              <option value="">Select bootcamp hub location…</option>
+              {BOOTCAMPS.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           </Field>
         </div>
@@ -288,10 +285,10 @@ function ViewModal({ teacher, onClose }) {
               </div>
 
               {[
-                ['Email',    teacher.email],
-                ['Phone',    teacher.phone],
-                ['Bootcamp', teacher.bootcamp],
-                ['Region',   teacher.region],
+                ['Email',      teacher.email],
+                ['Phone',      teacher.phone],
+                ['Cohort',     teacher.bootcamp],
+                ['Bootcamp Hub', teacher.region],
                 ['Registered', fmtDate(teacher.createdAt)],
               ].map(([label, val]) => (
                 <div key={label} style={{ marginBottom: 10 }}>

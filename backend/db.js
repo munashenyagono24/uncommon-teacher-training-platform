@@ -1,56 +1,569 @@
-import pg from 'pg';
+import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const { Pool } = pg;
+export const isTestMode = process.env.NODE_ENV === 'test';
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+export const isSupabaseServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const hasDbUrl = !!process.env.DATABASE_URL;
+export const hasSupabase = !isTestMode && !!(supabaseUrl && supabaseKey);
 
-// Connection Pool (only if URL is configured)
-let pool = null;
-if (hasDbUrl) {
-  const isProduction = process.env.NODE_ENV === 'production' || process.env.DATABASE_URL.includes('neon.tech');
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: isProduction ? { rejectUnauthorized: false } : false
-  });
-
-  pool.on('error', (err) => {
-    console.error('Unexpected error on idle PostgreSQL client:', err.message);
-  });
+export let supabase = null;
+if (hasSupabase) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+  console.log('🔌  [DATABASE]: Connected to Supabase!');
+  if (isSupabaseServiceRole) {
+    console.log('🔐  [DATABASE]: Using SUPABASE_SERVICE_ROLE_KEY for backend operations.');
+  } else {
+    console.warn('⚠️  [DATABASE]: Using SUPABASE_ANON_KEY only. If your tables use row-level security, backend writes may fail.');
+  }
 } else {
-  console.warn('\n⚠️  [DATABASE WARNING]: DATABASE_URL is not set. The backend is running in temporary IN-MEMORY mode.');
-  console.warn('⚠️  Data will NOT persist when the server restarts. To enable persistence, set up Neon PostgreSQL.\n');
+  if (isTestMode) {
+    console.warn('\n⚠️  [DATABASE WARNING]: Test mode enabled. Using temporary in-memory database for backend tests.');
+  } else {
+    console.warn('\n⚠️  [DATABASE WARNING]: Supabase env variables not set or invalid. The backend is running in temporary IN-MEMORY mode.');
+    console.warn('⚠️  Data will NOT persist when the server restarts. Set SUPABASE_URL and SUPABASE_ANON_KEY to enable persistence.\n');
+  }
 }
 
-// ── In-Memory Database Fallback for local testing ───────
+// ── In-Memory Database Fallback ──
 const memDb = {
+  users: [],
   teachers: [],
   workshops: [],
-  attendance: []
+  attendance: [],
+  locations: [],
+  facilitators: [],
+  ministry_contacts: [],
+  fund_requisitions: [],
+  fund_line_items: [],
 };
 
-// Helper function to simulate SQL queries
-function mockQuery(text, params = []) {
-  const queryNormalized = text.trim().replace(/\s+/g, ' ').toLowerCase();
+// Seeding local admin for testing/fallback
+memDb.users.push({
+  id: '00000000-0000-0000-0000-000000000000',
+  email: 'anesu@uncommon.org',
+  password: '$2b$10$6ou99UNXoIQWDRa36qP1eOfnQCUOUOh8QuaTcjTjF/fTY.djtE/9u', // bcrypt hash for 'anesu123'
+  role: 'admin',
+  teacher_id: null,
+  created_at: new Date().toISOString()
+});
 
-  // --- COUNT(*) QUERIES FOR DASHBOARD ---
-  if (queryNormalized.includes('select count(*)')) {
-    if (queryNormalized.includes('from teachers')) {
-      return { rows: [{ count: memDb.teachers.length }] };
+function upsertById(list, row) {
+  const idx = list.findIndex(item => item.id === row.id);
+  if (idx >= 0) list[idx] = row;
+  else list.push(row);
+  return row;
+}
+
+// Backward compatibility or legacy query support if needed
+export function query(text, params) {
+  console.warn('Direct SQL query called, unsupported in Supabase mode:', text);
+  return Promise.resolve({ rows: [] });
+}
+
+// ── Database Helper Functions ──
+
+// Auth / Users
+export async function createUser(user) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('users').insert(user).select().single();
+    if (error) {
+      if (error.code === '42501' || /row-level security/i.test(error.message)) {
+        throw new Error('Supabase permission denied: row-level security is blocking writes. Set SUPABASE_SERVICE_ROLE_KEY or update table policies.');
+      }
+      throw error;
     }
-    if (queryNormalized.includes('from workshops')) {
-      return { rows: [{ count: memDb.workshops.length }] };
-    }
-    if (queryNormalized.includes('from attendance')) {
-      return { rows: [{ count: memDb.attendance.length }] };
-    }
+    return data;
+  } else {
+    memDb.users.push(user);
+    return user;
   }
+}
 
-  // --- LEFT JOIN WORKSHOP CHART STATS ---
-  if (queryNormalized.includes('select w.id, w.name') || queryNormalized.includes('left join attendance')) {
-    const rows = memDb.workshops.map(w => {
+export async function getUserByEmail(email) {
+  if (hasSupabase) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+    if (error) throw error;
+    if (!user) return null;
+
+    let teacher = null;
+    if (user.teacher_id) {
+      const { data: teacherData, error: teacherError } = await supabase
+        .from('teachers')
+        .select('*')
+        .eq('id', user.teacher_id)
+        .maybeSingle();
+      if (teacherError) throw teacherError;
+      teacher = teacherData || null;
+    }
+
+    return { ...user, teachers: teacher };
+  } else {
+    const user = memDb.users.find(u => u.email === email);
+    if (!user) return null;
+    const teacher = memDb.teachers.find(t => t.id === user.teacher_id);
+    return { ...user, teachers: teacher || null };
+  }
+}
+
+export async function getUserById(id) {
+  if (hasSupabase) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!user) return null;
+
+    let teacher = null;
+    if (user.teacher_id) {
+      const { data: teacherData, error: teacherError } = await supabase
+        .from('teachers')
+        .select('*')
+        .eq('id', user.teacher_id)
+        .maybeSingle();
+      if (teacherError) throw teacherError;
+      teacher = teacherData || null;
+    }
+
+    return { ...user, teachers: teacher };
+  } else {
+    const user = memDb.users.find(u => u.id === id);
+    if (!user) return null;
+    const teacher = memDb.teachers.find(t => t.id === user.teacher_id);
+    return { ...user, teachers: teacher || null };
+  }
+}
+
+// Teachers
+export async function getTeachers() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('teachers').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.teachers].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+}
+
+export async function getTeacherById(id) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('teachers').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  } else {
+    return memDb.teachers.find(t => t.id === id) || null;
+  }
+}
+
+export async function upsertTeacher(teacher) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('teachers').upsert(teacher).select().single();
+    if (error) {
+      if (error.code === '42501' || /row-level security/i.test(error.message)) {
+        throw new Error('Supabase permission denied: row-level security is blocking teacher writes. Set SUPABASE_SERVICE_ROLE_KEY or update table policies.');
+      }
+      throw error;
+    }
+    return data;
+  } else {
+    upsertById(memDb.teachers, teacher);
+    return teacher;
+  }
+}
+
+export async function deleteTeacher(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('teachers').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.teachers = memDb.teachers.filter(t => t.id !== id);
+    memDb.attendance = memDb.attendance.filter(a => a.teacher_id !== id);
+  }
+}
+
+export async function getAttendanceByTeacherId(teacherId) {
+  if (hasSupabase) {
+    const { data, error } = await supabase
+      .from('attendance')
+      .select('*')
+      .eq('teacher_id', teacherId)
+      .order('check_in_time', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return memDb.attendance
+      .filter(a => a.teacher_id === teacherId)
+      .sort((a, b) => b.check_in_time.localeCompare(a.check_in_time));
+  }
+}
+
+// Workshops
+export async function getWorkshops() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('workshops').select('*').order('date', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.workshops].sort((a, b) => b.date.localeCompare(a.date));
+  }
+}
+
+export async function getWorkshopById(id) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('workshops').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  } else {
+    return memDb.workshops.find(w => w.id === id) || null;
+  }
+}
+
+export async function getLastWorkshopAtLocation(locationId, locationName) {
+  if (hasSupabase) {
+    let query = supabase.from('workshops').select('*');
+    if (locationId) {
+      query = query.eq('location_id', locationId);
+    } else {
+      query = query.eq('location', locationName);
+    }
+    const { data, error } = await query.order('date', { ascending: false }).limit(1);
+    if (error) throw error;
+    return data && data.length > 0 ? data[0] : null;
+  } else {
+    let list = memDb.workshops;
+    if (locationId) {
+      list = list.filter(w => w.location_id === locationId);
+    } else {
+      list = list.filter(w => w.location === locationName);
+    }
+    const sorted = [...list].sort((a, b) => b.date.localeCompare(a.date));
+    return sorted.length > 0 ? sorted[0] : null;
+  }
+}
+
+export async function getTeachersByWorkshopId(workshopId) {
+  if (hasSupabase) {
+    const { data: att, error: attErr } = await supabase.from('attendance').select('teacher_id').eq('workshop_id', workshopId);
+    if (attErr) throw attErr;
+    if (!att || att.length === 0) return [];
+    const ids = att.map(a => a.teacher_id);
+    const { data: teachers, error: tErr } = await supabase.from('teachers').select('*').in('id', ids);
+    if (tErr) throw tErr;
+    return teachers || [];
+  } else {
+    const teacherIds = memDb.attendance.filter(a => a.workshop_id === workshopId).map(a => a.teacher_id);
+    return memDb.teachers.filter(t => teacherIds.includes(t.id));
+  }
+}
+
+export async function upsertWorkshop(workshop) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('workshops').upsert(workshop).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    upsertById(memDb.workshops, workshop);
+    return workshop;
+  }
+}
+
+export async function deleteWorkshop(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('workshops').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.workshops = memDb.workshops.filter(w => w.id !== id);
+    memDb.attendance = memDb.attendance.filter(a => a.workshop_id !== id);
+  }
+}
+
+// Attendance
+export async function getAttendance() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('attendance').select('*').order('check_in_time', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.attendance].sort((a, b) => b.check_in_time.localeCompare(a.check_in_time));
+  }
+}
+
+export async function getAttendanceByWorkshopId(workshopId) {
+  if (hasSupabase) {
+    const { data, error } = await supabase
+      .from('attendance')
+      .select('*')
+      .eq('workshop_id', workshopId)
+      .order('check_in_time', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return memDb.attendance
+      .filter(a => a.workshop_id === workshopId)
+      .sort((a, b) => b.check_in_time.localeCompare(a.check_in_time));
+  }
+}
+
+export async function getAttendanceDuplicateCheck(teacherId, workshopId, date) {
+  if (hasSupabase) {
+    const { data, error } = await supabase
+      .from('attendance')
+      .select('*')
+      .eq('teacher_id', teacherId)
+      .eq('workshop_id', workshopId)
+      .eq('attendance_date', date);
+    if (error) throw error;
+    return data && data.length > 0;
+  } else {
+    return memDb.attendance.some(a => a.teacher_id === teacherId && a.workshop_id === workshopId && a.attendance_date === date);
+  }
+}
+
+export async function insertAttendance(record) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('attendance').insert(record).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    memDb.attendance.push(record);
+    return record;
+  }
+}
+
+export async function deleteAttendance(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('attendance').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.attendance = memDb.attendance.filter(a => a.id !== id);
+  }
+}
+
+// Locations
+export async function getLocations() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('locations').select('*').order('name', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.locations].sort((a, b) => a.name.localeCompare(b.name));
+  }
+}
+
+export async function getLocationById(id) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('locations').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  } else {
+    return memDb.locations.find(l => l.id === id) || null;
+  }
+}
+
+export async function upsertLocation(location) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('locations').upsert(location).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    upsertById(memDb.locations, location);
+    return location;
+  }
+}
+
+export async function deleteLocation(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('locations').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.locations = memDb.locations.filter(l => l.id !== id);
+  }
+}
+
+// Facilitators
+export async function getFacilitators() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('facilitators').select('*').order('name', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.facilitators].sort((a, b) => a.name.localeCompare(b.name));
+  }
+}
+
+export async function upsertFacilitator(facilitator) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('facilitators').upsert(facilitator).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    upsertById(memDb.facilitators, facilitator);
+    return facilitator;
+  }
+}
+
+export async function deleteFacilitator(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('facilitators').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.facilitators = memDb.facilitators.filter(f => f.id !== id);
+  }
+}
+
+// Ministry Contacts
+export async function getMinistryContacts() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('ministry_contacts').select('*').order('name', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.ministry_contacts].sort((a, b) => a.name.localeCompare(b.name));
+  }
+}
+
+export async function upsertMinistryContact(contact) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('ministry_contacts').upsert(contact).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    upsertById(memDb.ministry_contacts, contact);
+    return contact;
+  }
+}
+
+export async function deleteMinistryContact(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('ministry_contacts').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.ministry_contacts = memDb.ministry_contacts.filter(m => m.id !== id);
+  }
+}
+
+// Fund Requisitions
+export async function getFundRequisitions() {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('fund_requisitions').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  } else {
+    return [...memDb.fund_requisitions].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }
+}
+
+export async function getFundRequisitionById(id) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('fund_requisitions').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  } else {
+    return memDb.fund_requisitions.find(r => r.id === id) || null;
+  }
+}
+
+export async function upsertFundRequisition(requisition) {
+  if (hasSupabase) {
+    const { data, error } = await supabase.from('fund_requisitions').upsert(requisition).select().single();
+    if (error) throw error;
+    return data;
+  } else {
+    upsertById(memDb.fund_requisitions, requisition);
+    return requisition;
+  }
+}
+
+export async function deleteFundRequisition(id) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('fund_requisitions').delete().eq('id', id);
+    if (error) throw error;
+  } else {
+    memDb.fund_requisitions = memDb.fund_requisitions.filter(r => r.id !== id);
+    memDb.fund_line_items = memDb.fund_line_items.filter(i => i.requisition_id !== id);
+  }
+}
+
+// Fund Line Items
+export async function getFundLineItemsForRequisition(requisitionId) {
+  if (hasSupabase) {
+    const { data, error } = await supabase
+      .from('fund_line_items')
+      .select('*')
+      .eq('requisition_id', requisitionId)
+      .order('category')
+      .order('description');
+    if (error) throw error;
+    return data || [];
+  } else {
+    return memDb.fund_line_items.filter(i => i.requisition_id === requisitionId);
+  }
+}
+
+export async function deleteFundLineItemsForRequisition(requisitionId) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('fund_line_items').delete().eq('requisition_id', requisitionId);
+    if (error) throw error;
+  } else {
+    memDb.fund_line_items = memDb.fund_line_items.filter(i => i.requisition_id !== requisitionId);
+  }
+}
+
+export async function saveFundLineItem(item) {
+  if (hasSupabase) {
+    const { error } = await supabase.from('fund_line_items').insert(item);
+    if (error) throw error;
+  } else {
+    memDb.fund_line_items.push(item);
+  }
+}
+
+// Dashboard statistics
+export async function getDashboardStats() {
+  if (hasSupabase) {
+    const { count: teachers } = await supabase.from('teachers').select('*', { count: 'exact', head: true });
+    const { count: workshops } = await supabase.from('workshops').select('*', { count: 'exact', head: true });
+    const { count: attendance } = await supabase.from('attendance').select('*', { count: 'exact', head: true });
+    return {
+      teachers: teachers || 0,
+      workshops: workshops || 0,
+      attendance: attendance || 0
+    };
+  } else {
+    return {
+      teachers: memDb.teachers.length,
+      workshops: memDb.workshops.length,
+      attendance: memDb.attendance.length
+    };
+  }
+}
+
+export async function getDashboardAttendanceByWorkshop() {
+  if (hasSupabase) {
+    const { data, error } = await supabase
+      .from('workshops')
+      .select('id, name, date, location, expected_participants, attendance(id)')
+      .order('date', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(w => ({
+      id: w.id,
+      name: w.name,
+      date: w.date,
+      location: w.location,
+      expectedParticipants: w.expected_participants,
+      count: w.attendance ? w.attendance.length : 0
+    }));
+  } else {
+    return memDb.workshops.map(w => {
       const count = memDb.attendance.filter(a => a.workshop_id === w.id).length;
       return {
         id: w.id,
@@ -61,125 +574,5 @@ function mockQuery(text, params = []) {
         count: count
       };
     }).sort((a, b) => b.date.localeCompare(a.date));
-    return { rows };
-  }
-
-  // --- TEACHERS ---
-  if (queryNormalized.includes('select * from teachers')) {
-    if (queryNormalized.includes('where id = $1')) {
-      const match = memDb.teachers.find(t => t.id === params[0]);
-      return { rows: match ? [match] : [] };
-    }
-    return { rows: [...memDb.teachers] };
-  }
-
-  if (queryNormalized.includes('insert into teachers')) {
-    // Columns: id, teacher_id, full_name, email, phone, bootcamp, region, qr_code, created_at
-    const row = {
-      id: params[0],
-      teacher_id: params[1],
-      full_name: params[2],
-      email: params[3],
-      phone: params[4],
-      bootcamp: params[5],
-      region: params[6],
-      qr_code: params[7],
-      created_at: params[8]
-    };
-    memDb.teachers.push(row);
-    return { rows: [row], rowCount: 1 };
-  }
-
-  if (queryNormalized.includes('delete from teachers where id = $1')) {
-    const id = params[0];
-    const initialLength = memDb.teachers.length;
-    memDb.teachers = memDb.teachers.filter(t => t.id !== id);
-    memDb.attendance = memDb.attendance.filter(a => a.teacher_id !== id); // cascade delete
-    return { rowCount: initialLength - memDb.teachers.length };
-  }
-
-  // --- WORKSHOPS ---
-  if (queryNormalized.includes('select * from workshops')) {
-    if (queryNormalized.includes('where id = $1')) {
-      const match = memDb.workshops.find(w => w.id === params[0]);
-      return { rows: match ? [match] : [] };
-    }
-    return { rows: [...memDb.workshops] };
-  }
-
-  if (queryNormalized.includes('insert into workshops')) {
-    // Columns: id, name, date, location, facilitators, expected_participants, created_at
-    let facilitators = params[4];
-    if (typeof facilitators === 'string') {
-      try { facilitators = JSON.parse(facilitators); } catch (_) {}
-    }
-    const row = {
-      id: params[0],
-      name: params[1],
-      date: params[2],
-      location: params[3],
-      facilitators: facilitators || [],
-      expected_participants: parseInt(params[5], 10),
-      created_at: params[6]
-    };
-    memDb.workshops.push(row);
-    return { rows: [row], rowCount: 1 };
-  }
-
-  if (queryNormalized.includes('delete from workshops where id = $1')) {
-    const id = params[0];
-    const initialLength = memDb.workshops.length;
-    memDb.workshops = memDb.workshops.filter(w => w.id !== id);
-    memDb.attendance = memDb.attendance.filter(a => a.workshop_id !== id); // cascade delete
-    return { rowCount: initialLength - memDb.workshops.length };
-  }
-
-  // --- ATTENDANCE ---
-  if (queryNormalized.includes('select * from attendance')) {
-    if (queryNormalized.includes('where teacher_id = $1 and workshop_id = $2')) {
-      const match = memDb.attendance.find(a => a.teacher_id === params[0] && a.workshop_id === params[1]);
-      return { rows: match ? [match] : [] };
-    }
-    return { rows: [...memDb.attendance] };
-  }
-
-  if (queryNormalized.includes('insert into attendance')) {
-    const exists = memDb.attendance.some(a => a.teacher_id === params[1] && a.workshop_id === params[2]);
-    if (exists) {
-      const err = new Error('duplicate key value violates unique constraint');
-      err.code = '23505';
-      throw err;
-    }
-    const row = {
-      id: params[0],
-      teacher_id: params[1],
-      workshop_id: params[2],
-      check_in_time: params[3],
-      status: params[4],
-      sync_status: params[5]
-    };
-    memDb.attendance.push(row);
-    return { rows: [row], rowCount: 1 };
-  }
-
-  if (queryNormalized.includes('delete from attendance where id = $1')) {
-    const id = params[0];
-    const initialLength = memDb.attendance.length;
-    memDb.attendance = memDb.attendance.filter(a => a.id !== id);
-    return { rowCount: initialLength - memDb.attendance.length };
-  }
-
-  throw new Error(`Unsupported mock query: "${text}"`);
-}
-
-// ── Exported query interface ────────────────────────────
-export function query(text, params) {
-  if (hasDbUrl) {
-    return pool.query(text, params);
-  } else {
-    // Run simulated mock database logic
-    return Promise.resolve(mockQuery(text, params));
   }
 }
-
-export { pool };

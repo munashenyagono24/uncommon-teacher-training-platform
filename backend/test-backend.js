@@ -7,11 +7,14 @@ const BASE_URL = `http://localhost:${TEST_PORT}/api`;
 
 console.log('Starting backend test server...');
 const serverProcess = spawn('node', ['server.js'], {
-  shell: true,
+  shell: false,
   env: {
     ...process.env,
+    NODE_ENV: 'test',
     PORT: TEST_PORT,
-    DATABASE_URL: '', // force in-memory mode
+    SUPABASE_URL: '',
+    SUPABASE_ANON_KEY: '',
+    SUPABASE_SERVICE_ROLE_KEY: '',
     CLERK_SECRET_KEY: '', // bypass auth checks for testing
   }
 });
