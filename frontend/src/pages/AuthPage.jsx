@@ -1,10 +1,16 @@
 import { useState } from 'react'
 import { useApp } from '../hooks/useAppState.jsx'
 
-const REGIONS = [
-  'Harare', 'Bulawayo', 'Manicaland',
-  'Mashonaland Central', 'Mashonaland East', 'Mashonaland West',
-  'Masvingo', 'Matabeleland North', 'Matabeleland South', 'Midlands'
+// Updated from Provinces to Hubs/Bootcamps
+const HUBS_AND_BOOTCAMPS = [
+  'Mbare Innovation Hub', 
+  'Highfield Innovation Hub',
+  'Mufakose Innovation Hub',
+  'Kambuzuma Innovation Hub',
+  'Young Africa Chitungwiza Hub', 
+  'Sally Foundation Innovation Hub', 
+  'Dzikwa TrustInnovation Hub',
+  'Nicki Keszker Innovation Hub', 
 ]
 
 export default function AuthPage() {
@@ -18,11 +24,11 @@ export default function AuthPage() {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('teacher')
 
-  // Teacher Profile Fields (For Teacher Signup)
+  // Teacher Profile Fields
   const [fullName, setFullName] = useState('')
   const [phone, setPhone] = useState('')
   const [bootcamp, setBootcamp] = useState('')
-  const [region, setRegion] = useState('')
+  const [region, setRegion] = useState('') // We keep the variable name 'region' to ensure backend compatibility, but the UI shows Hubs
   const [age, setAge] = useState('')
   const [gender, setGender] = useState('')
 
@@ -49,7 +55,7 @@ export default function AuthPage() {
             fullName: fullName.trim(),
             phone: phone.trim(),
             bootcamp: bootcamp.trim(),
-            region,
+            region, 
             age: parseInt(age, 10),
             gender
           }
@@ -66,7 +72,10 @@ export default function AuthPage() {
   return (
     <div className="auth-container" style={styles.container}>
       <div className="auth-card" style={styles.card}>
+        
+        {/* Updated Branding Colors */}
         <div style={styles.header}>
+          <div style={styles.logoIcon}>U</div>
           <h2 style={styles.title}>Uncommon.org</h2>
           <p style={styles.subtitle}>Teacher Training Portal</p>
         </div>
@@ -122,7 +131,7 @@ export default function AuthPage() {
                       type="text"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. tariro moyo"
+                      placeholder="e.g. Tariro Moyo"
                       style={styles.input}
                       required
                     />
@@ -141,7 +150,7 @@ export default function AuthPage() {
                   </div>
 
                   <div className="form-group" style={styles.formGroup}>
-                    <label style={styles.label}>Bootcamp</label>
+                    <label style={styles.label}>Bootcamp Number/Name</label>
                     <input
                       type="text"
                       value={bootcamp}
@@ -154,16 +163,16 @@ export default function AuthPage() {
 
                   <div style={styles.row}>
                     <div className="form-group" style={{ ...styles.formGroup, flex: 1 }}>
-                      <label style={styles.label}>Region</label>
+                      <label style={styles.label}>Hub / Location</label>
                       <select
                         value={region}
                         onChange={(e) => setRegion(e.target.value)}
                         style={styles.select}
                         required
                       >
-                        <option value="">Select...</option>
-                        {REGIONS.map((r) => (
-                          <option key={r} value={r}>{r}</option>
+                        <option value="">Select Hub...</option>
+                        {HUBS_AND_BOOTCAMPS.map((loc) => (
+                          <option key={loc} value={loc}>{loc}</option>
                         ))}
                       </select>
                     </div>
@@ -208,7 +217,7 @@ export default function AuthPage() {
         <div style={styles.footer}>
           <p style={styles.footerText}>
             {isLogin ? "Don't have an account?" : 'Already have an account?'}
-            <button onClick={handleToggle} style={styles.toggleBtn}>
+            <button type="button" onClick={handleToggle} style={styles.toggleBtn}>
               {isLogin ? 'Register here' : 'Log in here'}
             </button>
           </p>
@@ -218,44 +227,59 @@ export default function AuthPage() {
   )
 }
 
+// Completely Overhauled White & Blue Theme
 const styles = {
   container: {
     minHeight: '100vh',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'radial-gradient(circle at 10% 20%, #064e3b 0%, #0f172a 90%)',
+    background: '#f8fafc', // Slate-50 (Clean light background)
     padding: '20px',
     boxSizing: 'border-box',
     fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
   },
   card: {
-    background: 'rgba(255, 255, 255, 0.08)',
-    backdropFilter: 'blur(16px)',
-    WebkitBackdropFilter: 'blur(16px)',
-    border: '1px solid rgba(255, 255, 255, 0.12)',
+    background: '#ffffff',
+    border: '1px solid #e2e8f0', // Light slate border
     borderRadius: '16px',
     padding: '32px 40px',
     width: '100%',
     maxWidth: '440px',
-    boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-    color: '#fff',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+    color: '#1e293b', // Dark slate text
     boxSizing: 'border-box'
   },
   header: {
     textAlign: 'center',
-    marginBottom: '24px'
+    marginBottom: '28px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center'
+  },
+  logoIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '48px',
+    height: '48px',
+    background: '#dbeafe', // Blue-100
+    color: '#2563eb', // Blue-600
+    borderRadius: '12px',
+    fontSize: '24px',
+    fontWeight: '800',
+    marginBottom: '12px'
   },
   title: {
-    fontSize: '28px',
+    fontSize: '24px',
     fontWeight: '800',
     margin: '0',
-    color: '#34d399',
+    color: '#0f172a', // Slate-900
     letterSpacing: '-0.02em'
   },
   subtitle: {
     fontSize: '14px',
-    color: 'rgba(255, 255, 255, 0.6)',
+    color: '#64748b', // Slate-500
     margin: '4px 0 0',
     fontWeight: '500'
   },
@@ -272,28 +296,28 @@ const styles = {
   label: {
     fontSize: '12px',
     fontWeight: '600',
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: '#475569', // Slate-600
     textTransform: 'uppercase',
     letterSpacing: '0.05em'
   },
   input: {
-    background: 'rgba(0, 0, 0, 0.2)',
-    border: '1px solid rgba(255, 255, 255, 0.15)',
+    background: '#f8fafc', // Slate-50
+    border: '1px solid #cbd5e1', // Slate-300
     borderRadius: '8px',
     padding: '10px 14px',
-    color: '#fff',
+    color: '#1e293b', // Slate-800
     fontSize: '14px',
     outline: 'none',
-    transition: 'border-color 0.2s',
+    transition: 'all 0.2s ease',
     boxSizing: 'border-box',
     width: '100%'
   },
   select: {
-    background: 'rgba(0, 0, 0, 0.2)',
-    border: '1px solid rgba(255, 255, 255, 0.15)',
+    background: '#f8fafc',
+    border: '1px solid #cbd5e1',
     borderRadius: '8px',
     padding: '10px 14px',
-    color: '#fff',
+    color: '#1e293b',
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
@@ -301,7 +325,7 @@ const styles = {
     cursor: 'pointer'
   },
   profileSection: {
-    borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+    borderTop: '1px solid #e2e8f0',
     paddingTop: '16px',
     marginTop: '8px',
     display: 'flex',
@@ -312,7 +336,7 @@ const styles = {
     margin: '0 0 4px',
     fontSize: '13px',
     fontWeight: '700',
-    color: '#34d399',
+    color: '#2563eb', // Blue-600
     textTransform: 'uppercase',
     letterSpacing: '0.04em'
   },
@@ -321,23 +345,24 @@ const styles = {
     gap: '12px'
   },
   submitBtn: {
-    background: '#059669',
+    background: '#2563eb', // Blue-600
     border: 'none',
     borderRadius: '8px',
     padding: '12px',
-    color: '#fff',
+    color: '#ffffff',
     fontSize: '15px',
-    fontWeight: '700',
+    fontWeight: '600',
     cursor: 'pointer',
-    transition: 'background 0.2s, transform 0.1s',
-    marginTop: '8px'
+    transition: 'background 0.2s',
+    marginTop: '8px',
+    boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)'
   },
   error: {
-    background: 'rgba(239, 68, 68, 0.2)',
-    border: '1px solid rgba(239, 68, 68, 0.4)',
+    background: '#fef2f2', // Red-50
+    border: '1px solid #fecaca', // Red-200
     borderRadius: '8px',
     padding: '10px 12px',
-    color: '#fca5a5',
+    color: '#ef4444', // Red-500
     fontSize: '13px',
     fontWeight: '500',
     marginBottom: '16px',
@@ -345,11 +370,11 @@ const styles = {
   },
   footer: {
     textAlign: 'center',
-    marginTop: '20px'
+    marginTop: '24px'
   },
   footerText: {
     fontSize: '13px',
-    color: 'rgba(255, 255, 255, 0.5)',
+    color: '#64748b', // Slate-500
     margin: '0',
     display: 'flex',
     alignItems: 'center',
@@ -359,11 +384,11 @@ const styles = {
   toggleBtn: {
     background: 'none',
     border: 'none',
-    color: '#34d399',
+    color: '#2563eb', // Blue-600
     fontSize: '13px',
-    fontWeight: '700',
+    fontWeight: '600',
     cursor: 'pointer',
     padding: '0',
-    textDecoration: 'underline'
+    textDecoration: 'none'
   }
 }
