@@ -30,7 +30,7 @@ function IconTrash({ style }) {
 }
 
 export default function WorkshopsPage() {
-  const { state, recordAttendance, updateWorkshop, removeWorkshop, toast } = useApp()
+  const { state, recordAttendance, updateWorkshop, removeWorkshop, addWorkshop, toast } = useApp()
   const { teachers = [], workshops = [], attendance = [], isOnline } = state
 
   // Navigation & View Management States
@@ -42,7 +42,16 @@ export default function WorkshopsPage() {
   const [showManualAdd, setShowManualAdd] = useState(false)
   const [commentText, setCommentText] = useState('')
 
+  // New states for Create Workshop Modal
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [formData, setFormData] = useState({ name: '', date: '', location: '', facilitators: '' })
+
   const qrCodeInstanceRef = useRef(null)
+  
+  // NEW REFS: To handle rapid-fire duplicate scanning
+  const scannedIdsRef = useRef(new Set())
+  const lastToastTimeRef = useRef(0)
+
   const currentWorkshop = workshops.find(w => w.id === activeWorkshopId)
 
   // Filter workshops list based on search term
@@ -57,6 +66,16 @@ export default function WorkshopsPage() {
   const expectedCount = currentWorkshop?.expectedAttendees || 50
   const presentCount = workshopAttendance.filter(a => a.status === 'present').length
   const attendanceRate = expectedCount > 0 ? Math.round((presentCount / expectedCount) * 100) : 0
+
+  // ── Keeps synchronous tracking ref updated with actual state ──
+  useEffect(() => {
+    if (activeWorkshopId) {
+      const currentIds = attendance
+        .filter(a => a.workshopId === activeWorkshopId)
+        .map(a => a.teacherId)
+      scannedIdsRef.current = new Set(currentIds)
+    }
+  }, [attendance, activeWorkshopId])
 
   // ── Programmatic QR Camera Stream Framework ──
   useEffect(() => {
@@ -126,20 +145,27 @@ export default function WorkshopsPage() {
       t.teacherId === rawResult
     )
 
+    const now = Date.now()
+
     if (!teacher) {
-      toast('QR Code not recognized. Profile record missing.', 'error')
+      if (now - lastToastTimeRef.current > 3000) {
+        toast('QR Code not recognized. Profile record missing.', 'error')
+        lastToastTimeRef.current = now
+      }
       return
     }
 
-    // CRITICAL: Explicit duplicate prevention validation within active workshop
-    const alreadyRegistered = attendance.some(
-      a => a.teacherId === teacher.id && a.workshopId === activeWorkshopId
-    )
-
-    if (alreadyRegistered) {
-      toast(`${teacher.fullName} is already registered/checked in!`, 'warning')
-      return // Explicitly terminates logic loop to block duplicate records
+    // CRITICAL FIX: Synchronous check to block rapid-fire camera duplicate reads
+    if (scannedIdsRef.current.has(teacher.id)) {
+      if (now - lastToastTimeRef.current > 3000) {
+        toast('Participant present already', 'warning')
+        lastToastTimeRef.current = now
+      }
+      return 
     }
+
+    // Immediately cache the ID so the next 10ms frame scan ignores it
+    scannedIdsRef.current.add(teacher.id)
 
     const record = {
       id: uid(),
@@ -152,7 +178,7 @@ export default function WorkshopsPage() {
 
     await recordAttendance(record)
     toast(`Successfully registered: ${teacher.fullName}`, 'success')
-  }, [teachers, attendance, activeWorkshopId, isOnline, recordAttendance, toast])
+  }, [teachers, activeWorkshopId, isOnline, recordAttendance, toast])
 
   // ── Manual Add / Toggle Interactions ──
   const handleManualAddTeacher = async (teacherId) => {
@@ -165,7 +191,7 @@ export default function WorkshopsPage() {
     )
 
     if (alreadyRegistered) {
-      toast(`${teacher.fullName} is already listed here.`, 'warning')
+      toast('Participant present already', 'warning')
       return
     }
 
@@ -219,6 +245,32 @@ export default function WorkshopsPage() {
     }
   }
 
+  // ── Handle Creating New Workshop ──
+  const handleCreateWorkshop = async (e) => {
+    e.preventDefault()
+    const newWorkshop = {
+      id: `ws-${uid()}`,
+      name: formData.name,
+      date: formData.date,
+      location: formData.location,
+      expectedAttendees: 50,
+      status: 'planned',
+      facilitators: formData.facilitators ? formData.facilitators.split(',').map(f => f.trim()) : [],
+      comments: [],
+      createdAt: new Date().toISOString()
+    }
+
+    if (addWorkshop) {
+      await addWorkshop(newWorkshop)
+      toast('Workshop created successfully!', 'success')
+    } else {
+      toast('Unable to save workshop. Check your global state functions.', 'error')
+    }
+
+    setIsModalOpen(false)
+    setFormData({ name: '', date: '', location: '', facilitators: '' })
+  }
+
   // ────────────────────────────────────────────────────────
   // SCREEN VIEW 1: MAIN LANDING LIST VIEW
   // ────────────────────────────────────────────────────────
@@ -234,7 +286,7 @@ export default function WorkshopsPage() {
             </p>
           </div>
           <button 
-            onClick={() => toast('Workshop creation feature form template placeholder', 'info')}
+            onClick={() => setIsModalOpen(true)}
             style={{ background: '#0b4f9c', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: 6, fontWeight: '500', cursor: 'pointer' }}
           >
             + Create Workshop
@@ -329,6 +381,83 @@ export default function WorkshopsPage() {
             })
           )}
         </div>
+
+        {/* Modal UI for Creating Workshop */}
+        {isModalOpen && (
+          <div style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+            background: 'rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(2px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100
+          }}>
+            <div style={{ background: '#fff', padding: '24px', borderRadius: '12px', width: '100%', maxWidth: '420px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)' }}>
+              <h2 style={{ margin: '0 0 20px 0', fontSize: '20px', color: '#0f172a' }}>Create New Workshop</h2>
+              
+              <form onSubmit={handleCreateWorkshop} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#475569' }}>Workshop Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g., Intro to Web Development"
+                    value={formData.name}
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#475569' }}>Date</label>
+                  <input 
+                    type="date" 
+                    required
+                    value={formData.date}
+                    onChange={(e) => setFormData({...formData, date: e.target.value})}
+                    style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#475569' }}>Location</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g., Bindura Hub"
+                    value={formData.location}
+                    onChange={(e) => setFormData({...formData, location: e.target.value})}
+                    style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#475569' }}>Facilitators (comma-separated)</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g., Munashe, John"
+                    value={formData.facilitators}
+                    onChange={(e) => setFormData({...formData, facilitators: e.target.value})}
+                    style={{ width: '100%', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '6px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsModalOpen(false)}
+                    style={{ padding: '10px 16px', background: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    style={{ padding: '10px 16px', background: '#0b4f9c', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '600', cursor: 'pointer' }}
+                  >
+                    Save Workshop
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
