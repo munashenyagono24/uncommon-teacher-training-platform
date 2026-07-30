@@ -3,6 +3,7 @@ import { useApp } from '../hooks/useAppState.jsx'
 import { uid, fmtDate } from '../utils/helpers.js'
 import { IconPlus, IconX, IconSearch, IconTrash, IconDownload, IconEvent, IconLocation, IconReport, IconCheck } from '../components/Icons.jsx'
 
+// This page has two main views:
 export default function RequisitionsPage() {
   const { state, addFundRequisition, removeFundRequisition, addLocation, addFacilitator, addMinistryContact, toast } = useApp()
   const { fundRequisitions, locations, facilitators, ministryContacts } = state
