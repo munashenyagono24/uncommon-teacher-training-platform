@@ -114,7 +114,7 @@ export default function ReportsPage() {
       
       {/* Header section matching screenshot */}
       <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ margin: 0, fontSize: '32px', fontWeight: '800', color: '#1e3a8a' }}>Reports</h1>
+        <h1 style={{ margin: 0, fontSize: '26', fontWeight: '700', color: '#0747A1' }}>Reports</h1>
         <p style={{ margin: '4px 0 0 0', fontSize: '15px', color: '#64748b' }}>
           Export any workshop's full data and displayed metrics to Excel.
         </p>

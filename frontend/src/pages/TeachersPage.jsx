@@ -47,7 +47,8 @@ export default function TeachersPage() {
     <div>
       <div className="page-header">
         <div>
-          <h2>Teachers</h2>
+          {/*<h2>Teachers</h2>*/}
+          <h2 style={{ margin: 0, fontSize: '26', fontWeight: '700', color: '#0747A1' }}>Teachers</h2>
           <p>{teachers.length} registered · each with a permanent QR code</p>
         </div>
         <div className="header-actions">

@@ -228,7 +228,7 @@ export default function WorkshopsPage() {
         {/* Header Block Row */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 26, fontWeight: '700', color: '#0b4f9c' }}>Workshops</h2>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: '700', color: '#0747A1' }}>Workshops</h2>
             <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: 14 }}>
               {filteredWorkshops.length} training session{filteredWorkshops.length !== 1 ? 's' : ''}
             </p>

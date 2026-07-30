@@ -85,7 +85,7 @@ export default function RequisitionsPage() {
       <div style={{ padding: '24px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '26px', fontWeight: '800', color: '#0f172a' }}>Funds Requisitions</h2>
+            <h2 style={{ margin: 0, fontSize: '26', fontWeight: '700', color: '#0747A1' }}>Funds Requisitions</h2>
             <p style={{ margin: '2px 0 0 0', fontSize: '14px', color: '#64748b' }}>
               Search previous requisitions or request new funds.
             </p>
